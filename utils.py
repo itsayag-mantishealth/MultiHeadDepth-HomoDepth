@@ -228,7 +228,7 @@ class Middlebury(Dataset):
                 left_image = img2tensor(left_dir)
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load left image:[/red] {left_dir}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load left image {left_dir}: {e}") from e
+                raise RuntimeError(f"Failed to load left image (path: {left_dir}): {e}") from e
 
             # Load right image
             try:
@@ -243,7 +243,7 @@ class Middlebury(Dataset):
                 logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
                 logger.error(f"  Right image path: [cyan]{right_dir}[/cyan]", extra={"markup": True})
                 logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
-                raise RuntimeError(f"Failed to load right image {right_dir}: {e}") from e
+                raise RuntimeError(f"Failed to load right image (path: {right_dir}): {e}") from e
 
             image = torch.cat((left_image, right_image), dim=0)
 
@@ -261,7 +261,7 @@ class Middlebury(Dataset):
                 disparity[mask] = 0
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load disparity:[/red] {disparity_path}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load disparity {disparity_path}: {e}") from e
+                raise RuntimeError(f"Failed to load disparity (path: {disparity_path}): {e}") from e
 
             return image, disparity
 
@@ -327,7 +327,7 @@ class SceneFlowDataset(Dataset):
                 raise FileNotFoundError(f"Left image file not found: {image_path}") from e
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load left image:[/red] {image_path}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load left image {image_path}: {e}") from e
+                raise RuntimeError(f"Failed to load left image (path: {image_path}): {e}") from e
 
             # Load disparity
             try:
@@ -340,7 +340,7 @@ class SceneFlowDataset(Dataset):
                 raise FileNotFoundError(f"Disparity file not found: {disparity_path}") from e
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load disparity:[/red] {disparity_path}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load disparity {disparity_path}: {e}") from e
+                raise RuntimeError(f"Failed to load disparity (path: {disparity_path}): {e}") from e
 
             # Load right image if stereo mode
             if self.stereo:
@@ -377,7 +377,7 @@ class SceneFlowDataset(Dataset):
                     logger.error(f"  Left image: [cyan]{image_path}[/cyan]", extra={"markup": True})
                     logger.error(f"  Right image path: [cyan]{right_image_path}[/cyan]", extra={"markup": True})
                     logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
-                    raise RuntimeError(f"Failed to load right image for sample {idx}: {e}") from e
+                    raise RuntimeError(f"Failed to load right image for sample {idx} (path: {right_image_path}): {e}") from e
 
             return left_image, disparity
 
@@ -463,7 +463,7 @@ class DTU(Dataset):
                 left_image = img2tensor(left_dir)
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load left image:[/red] {left_dir}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load left image {left_dir}: {e}") from e
+                raise RuntimeError(f"Failed to load left image (path: {left_dir}): {e}") from e
 
             # Load right image
             try:
@@ -476,7 +476,7 @@ class DTU(Dataset):
                 logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
                 logger.error(f"  Right image path: [cyan]{right_dir}[/cyan]", extra={"markup": True})
                 logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
-                raise RuntimeError(f"Failed to load right image {right_dir}: {e}") from e
+                raise RuntimeError(f"Failed to load right image (path: {right_dir}): {e}") from e
 
             image = torch.cat((left_image, right_image), dim=0)
 
@@ -491,7 +491,7 @@ class DTU(Dataset):
                 disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load depth:[/red] {depth}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load depth {depth}: {e}") from e
+                raise RuntimeError(f"Failed to load depth (path: {depth}): {e}") from e
 
             if self.output_homo:
                 try:
@@ -520,7 +520,7 @@ class DTU(Dataset):
                     logger.error(f"  Left proj: {left_poj_dir}")
                     logger.error(f"  Right proj: {right_poj_dir}")
                     logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
-                    raise RuntimeError(f"Failed to compute homography for sample {idx}: {e}") from e
+                    raise RuntimeError(f"Failed to compute homography for sample {idx} (left_proj: {left_poj_dir}, right_proj: {right_poj_dir}): {e}") from e
             else:
                 return image, disparity
 
@@ -596,7 +596,7 @@ class ADT(Dataset):
                 left_img = torch.from_numpy(left_img).permute(2, 0, 1).to(torch.float32)
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load left image:[/red] {left_path}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load left image {left_path}: {e}") from e
+                raise RuntimeError(f"Failed to load left image (path: {left_path}): {e}") from e
 
             # Load right image
             try:
@@ -611,7 +611,7 @@ class ADT(Dataset):
                 logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
                 logger.error(f"  Right image path: [cyan]{right_path}[/cyan]", extra={"markup": True})
                 logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
-                raise RuntimeError(f"Failed to load right image {right_path}: {e}") from e
+                raise RuntimeError(f"Failed to load right image (path: {right_path}): {e}") from e
 
             # Load depth
             try:
@@ -623,7 +623,7 @@ class ADT(Dataset):
                 depth = torch.load(depth_path)
             except Exception as e:
                 logger.error(f"[red]✗ Failed to load depth:[/red] {depth_path}\n[red]Error:[/red] {e}", extra={"markup": True})
-                raise RuntimeError(f"Failed to load depth {depth_path}: {e}") from e
+                raise RuntimeError(f"Failed to load depth (path: {depth_path}): {e}") from e
 
             if self.sep_out:
                 return left_img, right_img, depth
