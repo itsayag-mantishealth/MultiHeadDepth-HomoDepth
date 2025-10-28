@@ -1,5 +1,6 @@
 import os
 import random
+import logging
 
 import numpy as np
 import torch
@@ -10,6 +11,18 @@ import imageio.v2 as iio
 from skimage.transform import resize
 import re
 from collections import OrderedDict
+from rich.logging import RichHandler
+from rich.console import Console
+
+# Setup rich console and logging
+console = Console()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)]
+)
+logger = logging.getLogger("utils")
 
 
 def readPFM(file):
@@ -200,22 +213,65 @@ class Middlebury(Dataset):
         return len(self.image_list)
 
     def __getitem__(self, idx):
-        image_path = self.image_list[idx]
-        disparity_path = self.disp_list[idx]
+        try:
+            image_path = self.image_list[idx]
+            disparity_path = self.disp_list[idx]
+            logger.debug(f"Loading Middlebury sample {idx}: [cyan]{os.path.basename(image_path)}[/cyan]", extra={"markup": True})
 
-        left_dir = os.path.join(image_path, 'im0.png')
-        left_image = img2tensor(left_dir)
-        right_dir = os.path.join(image_path, 'im1.png')
-        right_image = img2tensor(right_dir)
-        image = torch.cat((left_image, right_image), dim=0)
-        disparity = readPFM(disparity_path)
-        disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
-        disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
-        mask = torch.logical_or(disparity < 0,
-                                torch.isinf(disparity) | torch.isnan(disparity))
-        disparity[mask] = 0
+            # Load left image
+            try:
+                left_dir = os.path.join(image_path, 'im0.png')
+                logger.debug(f"Loading left image from: {left_dir}")
+                if not os.path.exists(left_dir):
+                    logger.error(f"[red]✗ Left image not found:[/red] {left_dir}", extra={"markup": True})
+                    raise FileNotFoundError(f"Left image file not found: {left_dir}")
+                left_image = img2tensor(left_dir)
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load left image:[/red] {left_dir}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load left image {left_dir}: {e}") from e
 
-        return image, disparity
+            # Load right image
+            try:
+                right_dir = os.path.join(image_path, 'im1.png')
+                logger.debug(f"Loading right image from: {right_dir}")
+                if not os.path.exists(right_dir):
+                    logger.error(f"[red]✗ Right image not found:[/red] {right_dir}", extra={"markup": True})
+                    logger.error(f"  Image path: [yellow]{image_path}[/yellow]", extra={"markup": True})
+                    raise FileNotFoundError(f"Right image file not found: {right_dir}")
+                right_image = img2tensor(right_dir)
+            except Exception as e:
+                logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
+                logger.error(f"  Right image path: [cyan]{right_dir}[/cyan]", extra={"markup": True})
+                logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
+                raise RuntimeError(f"Failed to load right image {right_dir}: {e}") from e
+
+            image = torch.cat((left_image, right_image), dim=0)
+
+            # Load disparity
+            try:
+                logger.debug(f"Loading disparity from: {disparity_path}")
+                if not os.path.exists(disparity_path):
+                    logger.error(f"[red]✗ Disparity file not found:[/red] {disparity_path}", extra={"markup": True})
+                    raise FileNotFoundError(f"Disparity file not found: {disparity_path}")
+                disparity = readPFM(disparity_path)
+                disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
+                disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
+                mask = torch.logical_or(disparity < 0,
+                                        torch.isinf(disparity) | torch.isnan(disparity))
+                disparity[mask] = 0
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load disparity:[/red] {disparity_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load disparity {disparity_path}: {e}") from e
+
+            return image, disparity
+
+        except Exception as e:
+            logger.error(f"[red bold]✗ FAILED to load Middlebury sample {idx}[/red bold]", extra={"markup": True})
+            logger.error(f"  Dataset: Middlebury")
+            logger.error(f"  Index: {idx}")
+            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"  Error message: {str(e)}")
+            raise
 
 
 class SceneFlowDataset(Dataset):
@@ -256,20 +312,80 @@ class SceneFlowDataset(Dataset):
         return len(self.image_list)
 
     def __getitem__(self, idx):
-        image_path, disparity_path = self.image_list[idx]
+        try:
+            image_path, disparity_path = self.image_list[idx]
+            logger.debug(f"Loading sample {idx}: [cyan]{os.path.basename(image_path)}[/cyan]", extra={"markup": True})
 
-        left_image = img2tensor(image_path)
-        disparity = readPFM(disparity_path)
-        disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
-        disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
+            # Load left image
+            try:
+                logger.debug(f"Loading left image from: {image_path}")
+                left_image = img2tensor(image_path)
+            except FileNotFoundError as e:
+                logger.error(f"[red]✗ Left image not found:[/red] {image_path}", extra={"markup": True})
+                raise FileNotFoundError(f"Left image file not found: {image_path}") from e
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load left image:[/red] {image_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load left image {image_path}: {e}") from e
 
-        if self.stereo:
-            right_dir = os.path.join(os.path.dirname(image_path)[:-5], 'right')
-            right_image_path = os.path.join(right_dir, os.path.basename(image_path))
-            right_image = img2tensor(right_image_path)
-            left_image = torch.cat((left_image, right_image), dim=0)
+            # Load disparity
+            try:
+                logger.debug(f"Loading disparity from: {disparity_path}")
+                disparity = readPFM(disparity_path)
+                disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
+                disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
+            except FileNotFoundError as e:
+                logger.error(f"[red]✗ Disparity file not found:[/red] {disparity_path}", extra={"markup": True})
+                raise FileNotFoundError(f"Disparity file not found: {disparity_path}") from e
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load disparity:[/red] {disparity_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load disparity {disparity_path}: {e}") from e
 
-        return left_image, disparity
+            # Load right image if stereo mode
+            if self.stereo:
+                try:
+                    right_dir = os.path.join(os.path.dirname(image_path)[:-5], 'right')
+                    right_image_path = os.path.join(right_dir, os.path.basename(image_path))
+
+                    logger.debug(f"Loading right image from: {right_image_path}")
+                    logger.debug(f"  Left image dir: {os.path.dirname(image_path)}")
+                    logger.debug(f"  Right dir: {right_dir}")
+                    logger.debug(f"  Image basename: {os.path.basename(image_path)}")
+
+                    # Check if right image path exists
+                    if not os.path.exists(right_image_path):
+                        logger.error(f"[red]✗ Right image file does not exist:[/red]", extra={"markup": True})
+                        logger.error(f"  Expected path: [yellow]{right_image_path}[/yellow]", extra={"markup": True})
+                        logger.error(f"  Left image path: [yellow]{image_path}[/yellow]", extra={"markup": True})
+                        logger.error(f"  Directory exists: {os.path.exists(right_dir)}", extra={"markup": True})
+                        if os.path.exists(right_dir):
+                            files_in_dir = os.listdir(right_dir)
+                            logger.error(f"  Files in right dir: {files_in_dir[:10]}" + (" ..." if len(files_in_dir) > 10 else ""))
+                        raise FileNotFoundError(f"Right image file not found: {right_image_path}")
+
+                    right_image = img2tensor(right_image_path)
+                    left_image = torch.cat((left_image, right_image), dim=0)
+
+                except FileNotFoundError as e:
+                    logger.error(f"[red]✗ FAILED - Right image not found for sample {idx}:[/red]", extra={"markup": True})
+                    logger.error(f"  Left image: [cyan]{image_path}[/cyan]", extra={"markup": True})
+                    logger.error(f"  Expected right: [cyan]{right_image_path}[/cyan]", extra={"markup": True})
+                    raise FileNotFoundError(f"Right image file not found for sample {idx}: {right_image_path}") from e
+                except Exception as e:
+                    logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
+                    logger.error(f"  Left image: [cyan]{image_path}[/cyan]", extra={"markup": True})
+                    logger.error(f"  Right image path: [cyan]{right_image_path}[/cyan]", extra={"markup": True})
+                    logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
+                    raise RuntimeError(f"Failed to load right image for sample {idx}: {e}") from e
+
+            return left_image, disparity
+
+        except Exception as e:
+            logger.error(f"[red bold]✗ FAILED to load sample {idx}[/red bold]", extra={"markup": True})
+            logger.error(f"  Dataset: SceneFlowDataset")
+            logger.error(f"  Index: {idx}")
+            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"  Error message: {str(e)}")
+            raise
 
     def disparity2depth(self, disparity):
         return 1050 / disparity
@@ -330,29 +446,87 @@ class DTU(Dataset):
         return len(self.image_list)
 
     def __getitem__(self, idx):
-        left_dir, right_dir, left_poj_dir, right_poj_dir, depth = self.image_list[idx]
-        left_image = img2tensor(left_dir)
-        right_image = img2tensor(right_dir)
-        image = torch.cat((left_image, right_image), dim=0)
-        disparity = readPFM(depth)
-        disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
-        disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
+        try:
+            left_dir, right_dir, left_poj_dir, right_poj_dir, depth = self.image_list[idx]
+            logger.debug(f"Loading DTU sample {idx}: [cyan]{os.path.basename(left_dir)}[/cyan]", extra={"markup": True})
 
-        if self.output_homo:
-            left_poj = np.loadtxt(left_poj_dir).reshape(3, 4)
-            right_poj = np.loadtxt(right_poj_dir).reshape(3, 4)
-            right_poj_pinv = np.linalg.pinv(right_poj)
+            # Load left image
+            try:
+                logger.debug(f"Loading left image from: {left_dir}")
+                if not os.path.exists(left_dir):
+                    logger.error(f"[red]✗ Left image not found:[/red] {left_dir}", extra={"markup": True})
+                    raise FileNotFoundError(f"Left image file not found: {left_dir}")
+                left_image = img2tensor(left_dir)
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load left image:[/red] {left_dir}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load left image {left_dir}: {e}") from e
 
-            # sx, sy = 384/(1600-300), 288/(1200-200)
-            # S = np.diag([96 / 325, 0.288, 1])
-            S = np.diag([0.24, 0.24, 1])
-            S_inv = np.linalg.pinv(S)
-            homo = S @ left_poj @ right_poj_pinv @ S_inv
-            homo = torch.tensor(homo, dtype=torch.float32)
+            # Load right image
+            try:
+                logger.debug(f"Loading right image from: {right_dir}")
+                if not os.path.exists(right_dir):
+                    logger.error(f"[red]✗ Right image not found:[/red] {right_dir}", extra={"markup": True})
+                    raise FileNotFoundError(f"Right image file not found: {right_dir}")
+                right_image = img2tensor(right_dir)
+            except Exception as e:
+                logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
+                logger.error(f"  Right image path: [cyan]{right_dir}[/cyan]", extra={"markup": True})
+                logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
+                raise RuntimeError(f"Failed to load right image {right_dir}: {e}") from e
 
-            return image, homo, disparity
-        else:
-            return image, disparity
+            image = torch.cat((left_image, right_image), dim=0)
+
+            # Load disparity/depth
+            try:
+                logger.debug(f"Loading depth from: {depth}")
+                if not os.path.exists(depth):
+                    logger.error(f"[red]✗ Depth file not found:[/red] {depth}", extra={"markup": True})
+                    raise FileNotFoundError(f"Depth file not found: {depth}")
+                disparity = readPFM(depth)
+                disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
+                disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load depth:[/red] {depth}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load depth {depth}: {e}") from e
+
+            if self.output_homo:
+                try:
+                    logger.debug(f"Loading projection matrices")
+                    if not os.path.exists(left_poj_dir):
+                        logger.error(f"[red]✗ Left projection file not found:[/red] {left_poj_dir}", extra={"markup": True})
+                        raise FileNotFoundError(f"Left projection file not found: {left_poj_dir}")
+                    if not os.path.exists(right_poj_dir):
+                        logger.error(f"[red]✗ Right projection file not found:[/red] {right_poj_dir}", extra={"markup": True})
+                        raise FileNotFoundError(f"Right projection file not found: {right_poj_dir}")
+
+                    left_poj = np.loadtxt(left_poj_dir).reshape(3, 4)
+                    right_poj = np.loadtxt(right_poj_dir).reshape(3, 4)
+                    right_poj_pinv = np.linalg.pinv(right_poj)
+
+                    # sx, sy = 384/(1600-300), 288/(1200-200)
+                    # S = np.diag([96 / 325, 0.288, 1])
+                    S = np.diag([0.24, 0.24, 1])
+                    S_inv = np.linalg.pinv(S)
+                    homo = S @ left_poj @ right_poj_pinv @ S_inv
+                    homo = torch.tensor(homo, dtype=torch.float32)
+
+                    return image, homo, disparity
+                except Exception as e:
+                    logger.error(f"[red]✗ Failed to compute homography:[/red]", extra={"markup": True})
+                    logger.error(f"  Left proj: {left_poj_dir}")
+                    logger.error(f"  Right proj: {right_poj_dir}")
+                    logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
+                    raise RuntimeError(f"Failed to compute homography for sample {idx}: {e}") from e
+            else:
+                return image, disparity
+
+        except Exception as e:
+            logger.error(f"[red bold]✗ FAILED to load DTU sample {idx}[/red bold]", extra={"markup": True})
+            logger.error(f"  Dataset: DTU")
+            logger.error(f"  Index: {idx}")
+            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"  Error message: {str(e)}")
+            raise
 
     def get_max_disp(self):
         max_disp = -1
@@ -400,19 +574,64 @@ class ADT(Dataset):
         return len(self.image_list)
 
     def __getitem__(self, idx):
-        path = self.image_list[idx]
-        left_img = iio.imread(os.path.join(path, 'left.png'))
-        right_img = iio.imread(os.path.join(path, 'right.png'))
-        depth = torch.load(os.path.join(path, 'depth.pt'))
+        try:
+            path = self.image_list[idx]
+            logger.debug(f"Loading ADT sample {idx}: [cyan]{os.path.basename(path)}[/cyan]", extra={"markup": True})
 
-        left_img = torch.from_numpy(left_img).permute(2, 0, 1).to(torch.float32)
-        right_img = torch.from_numpy(right_img).repeat(3, 1, 1).to(torch.float32)
+            # Load left image
+            try:
+                left_path = os.path.join(path, 'left.png')
+                logger.debug(f"Loading left image from: {left_path}")
+                if not os.path.exists(left_path):
+                    logger.error(f"[red]✗ Left image not found:[/red] {left_path}", extra={"markup": True})
+                    raise FileNotFoundError(f"Left image file not found: {left_path}")
+                left_img = iio.imread(left_path)
+                left_img = torch.from_numpy(left_img).permute(2, 0, 1).to(torch.float32)
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load left image:[/red] {left_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load left image {left_path}: {e}") from e
 
-        if self.sep_out:
-            return left_img, right_img, depth
-        else:
-            image = torch.cat((left_img, right_img), dim=0)
-            return image, depth
+            # Load right image
+            try:
+                right_path = os.path.join(path, 'right.png')
+                logger.debug(f"Loading right image from: {right_path}")
+                if not os.path.exists(right_path):
+                    logger.error(f"[red]✗ Right image not found:[/red] {right_path}", extra={"markup": True})
+                    raise FileNotFoundError(f"Right image file not found: {right_path}")
+                right_img = iio.imread(right_path)
+                right_img = torch.from_numpy(right_img).repeat(3, 1, 1).to(torch.float32)
+            except Exception as e:
+                logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
+                logger.error(f"  Right image path: [cyan]{right_path}[/cyan]", extra={"markup": True})
+                logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
+                raise RuntimeError(f"Failed to load right image {right_path}: {e}") from e
+
+            # Load depth
+            try:
+                depth_path = os.path.join(path, 'depth.pt')
+                logger.debug(f"Loading depth from: {depth_path}")
+                if not os.path.exists(depth_path):
+                    logger.error(f"[red]✗ Depth file not found:[/red] {depth_path}", extra={"markup": True})
+                    raise FileNotFoundError(f"Depth file not found: {depth_path}")
+                depth = torch.load(depth_path)
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load depth:[/red] {depth_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load depth {depth_path}: {e}") from e
+
+            if self.sep_out:
+                return left_img, right_img, depth
+            else:
+                image = torch.cat((left_img, right_img), dim=0)
+                return image, depth
+
+        except Exception as e:
+            logger.error(f"[red bold]✗ FAILED to load ADT sample {idx}[/red bold]", extra={"markup": True})
+            logger.error(f"  Dataset: ADT")
+            logger.error(f"  Index: {idx}")
+            logger.error(f"  Path: {path}")
+            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"  Error message: {str(e)}")
+            raise
 
 
 
