@@ -269,6 +269,8 @@ class Middlebury(Dataset):
             logger.error(f"[red bold]✗ FAILED to load Middlebury sample {idx}[/red bold]", extra={"markup": True})
             logger.error(f"  Dataset: Middlebury")
             logger.error(f"  Index: {idx}")
+            logger.error(f"  Image path: [yellow]{image_path}[/yellow]", extra={"markup": True})
+            logger.error(f"  Disparity path: [yellow]{disparity_path}[/yellow]", extra={"markup": True})
             logger.error(f"  Error type: {type(e).__name__}")
             logger.error(f"  Error message: {str(e)}")
             raise
@@ -383,6 +385,8 @@ class SceneFlowDataset(Dataset):
             logger.error(f"[red bold]✗ FAILED to load sample {idx}[/red bold]", extra={"markup": True})
             logger.error(f"  Dataset: SceneFlowDataset")
             logger.error(f"  Index: {idx}")
+            logger.error(f"  Image path (left): [yellow]{image_path}[/yellow]", extra={"markup": True})
+            logger.error(f"  Disparity path: [yellow]{disparity_path}[/yellow]", extra={"markup": True})
             logger.error(f"  Error type: {type(e).__name__}")
             logger.error(f"  Error message: {str(e)}")
             raise
@@ -524,6 +528,9 @@ class DTU(Dataset):
             logger.error(f"[red bold]✗ FAILED to load DTU sample {idx}[/red bold]", extra={"markup": True})
             logger.error(f"  Dataset: DTU")
             logger.error(f"  Index: {idx}")
+            logger.error(f"  Left image path: [yellow]{left_dir}[/yellow]", extra={"markup": True})
+            logger.error(f"  Right image path: [yellow]{right_dir}[/yellow]", extra={"markup": True})
+            logger.error(f"  Depth path: [yellow]{depth}[/yellow]", extra={"markup": True})
             logger.error(f"  Error type: {type(e).__name__}")
             logger.error(f"  Error message: {str(e)}")
             raise
@@ -628,7 +635,13 @@ class ADT(Dataset):
             logger.error(f"[red bold]✗ FAILED to load ADT sample {idx}[/red bold]", extra={"markup": True})
             logger.error(f"  Dataset: ADT")
             logger.error(f"  Index: {idx}")
-            logger.error(f"  Path: {path}")
+            logger.error(f"  Sample path: [yellow]{path}[/yellow]", extra={"markup": True})
+            if 'left_path' in locals():
+                logger.error(f"  Left image path: [yellow]{left_path}[/yellow]", extra={"markup": True})
+            if 'right_path' in locals():
+                logger.error(f"  Right image path: [yellow]{right_path}[/yellow]", extra={"markup": True})
+            if 'depth_path' in locals():
+                logger.error(f"  Depth path: [yellow]{depth_path}[/yellow]", extra={"markup": True})
             logger.error(f"  Error type: {type(e).__name__}")
             logger.error(f"  Error message: {str(e)}")
             raise
