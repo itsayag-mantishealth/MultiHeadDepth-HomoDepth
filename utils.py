@@ -221,6 +221,34 @@ def create_validation_debug_images(model, val_dataset, device, save_dir, epoch, 
                     left_img = images[:3].cpu().permute(1, 2, 0).numpy()
                     right_img = None
 
+                # Handle different image value ranges
+                # Check if images are in [0, 255] range or normalized
+                img_min, img_max = left_img.min(), left_img.max()
+                logger.debug(f"Image value range: [{img_min:.3f}, {img_max:.3f}]")
+
+                if img_max > 10:  # Likely in [0, 255] range
+                    # Normalize to [0, 1]
+                    left_img = left_img / 255.0
+                    if right_img is not None:
+                        right_img = right_img / 255.0
+                    logger.debug("Images appear to be in [0, 255] range, normalized to [0, 1]")
+                elif img_min < 0 or img_max < 1.5:  # Likely normalized with ImageNet stats
+                    # Denormalize images (ImageNet normalization)
+                    mean = np.array([0.485, 0.456, 0.406])
+                    std = np.array([0.229, 0.224, 0.225])
+                    left_img = left_img * std + mean
+                    left_img = np.clip(left_img, 0, 1)
+                    if right_img is not None:
+                        right_img = right_img * std + mean
+                        right_img = np.clip(right_img, 0, 1)
+                    logger.debug("Images appear to be ImageNet normalized, denormalized to [0, 1]")
+                else:
+                    # Already in [0, 1] range
+                    left_img = np.clip(left_img, 0, 1)
+                    if right_img is not None:
+                        right_img = np.clip(right_img, 0, 1)
+                    logger.debug("Images appear to be in [0, 1] range")
+
                 gt_disp_np = gt_disp_batch.squeeze().cpu().numpy()
                 pred_disp_np = pred_disp.squeeze().cpu().numpy()
 
@@ -237,27 +265,34 @@ def create_validation_debug_images(model, val_dataset, device, save_dir, epoch, 
                     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
 
                 # Left image
-                axes[0].imshow(np.clip(left_img, 0, 1))
+                axes[0].imshow(left_img)
                 axes[0].set_title('Left Image')
                 axes[0].axis('off')
+                # Add crosshair lines
+                h, w = left_img.shape[:2]
+                axes[0].axhline(y=h//2, color='red', linewidth=0.5, alpha=0.7)
+                axes[0].axvline(x=w//2, color='red', linewidth=0.5, alpha=0.7)
 
                 # Right image (if available)
                 if right_img is not None:
-                    axes[1].imshow(np.clip(right_img, 0, 1))
+                    axes[1].imshow(right_img)
                     axes[1].set_title('Right Image')
                     axes[1].axis('off')
+                    # Add crosshair lines
+                    axes[1].axhline(y=h//2, color='red', linewidth=0.5, alpha=0.7)
+                    axes[1].axvline(x=w//2, color='red', linewidth=0.5, alpha=0.7)
                     offset = 1
                 else:
                     offset = 0
 
                 # Ground truth disparity
-                im_gt = axes[1 + offset].imshow(gt_disp_np, cmap='gray')
+                im_gt = axes[1 + offset].imshow(gt_disp_np, cmap='turbo')
                 axes[1 + offset].set_title('Ground Truth Disparity')
                 axes[1 + offset].axis('off')
                 plt.colorbar(im_gt, ax=axes[1 + offset], fraction=0.046, pad=0.04)
 
                 # Predicted disparity
-                im_pred = axes[2 + offset].imshow(pred_disp_np, cmap='gray',
+                im_pred = axes[2 + offset].imshow(pred_disp_np, cmap='turbo',
                                                   vmin=gt_disp_np.min(), vmax=gt_disp_np.max())
                 axes[2 + offset].set_title('Predicted Disparity')
                 axes[2 + offset].axis('off')
