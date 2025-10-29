@@ -4,6 +4,7 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, ConcatDataset
 from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.tensorboard import SummaryWriter
 import sys
 import logging
 from rich.console import Console
@@ -62,7 +63,7 @@ def save_model(in_model, epoch, out_dir, optimizer, loss):
         raise
 
 
-def valid(in_model, val_dataset, batch_size, device, samp_rate=None):
+def valid(in_model, val_dataset, batch_size, device, samp_rate=None, save_dir=None, epoch=None, tensorboard_writer=None):
     """Validate model with rich progress tracking and error handling."""
     try:
         logger.info("[bold blue]Starting validation phase...[/bold blue]", extra={"markup": True})
@@ -126,6 +127,34 @@ def valid(in_model, val_dataset, batch_size, device, samp_rate=None):
         console.print(results_table)
         logger.info("[green]✓[/green] Validation completed successfully", extra={"markup": True})
 
+        # Log metrics to tensorboard
+        if tensorboard_writer is not None and epoch is not None:
+            tensorboard_writer.add_scalar('validation/AbsRel', loss1, epoch)
+            tensorboard_writer.add_scalar('validation/D1', loss2, epoch)
+            tensorboard_writer.add_scalar('validation/RMSE', loss3, epoch)
+
+        # Return validation loss for best model tracking
+        val_loss = loss1  # Use AbsRel as the primary validation metric
+
+        # Create debug visualization images
+        if save_dir is not None and epoch is not None:
+            logger.info("[cyan]Creating validation debug images...[/cyan]", extra={"markup": True})
+            try:
+                utils.create_validation_debug_images(
+                    model=in_model,
+                    val_dataset=val_dataset,
+                    device=device,
+                    save_dir=save_dir,
+                    epoch=epoch,
+                    num_samples=10,
+                    stereo=True,
+                    tensorboard_writer=tensorboard_writer
+                )
+            except Exception as e:
+                logger.warning(f"[yellow]Failed to create debug images: {e}[/yellow]", extra={"markup": True})
+
+        return val_loss
+
     except Exception as e:
         logger.error(f"[red]✗[/red] Validation failed: {e}", extra={"markup": True})
         raise
@@ -168,6 +197,14 @@ def train(in_model, train_dataset, val_dataset, args):
             except OSError as e:
                 logger.error(f"[red]Failed to create save directory: {e}[/red]", extra={"markup": True})
                 raise
+
+        # Setup tensorboard
+        tensorboard_dir = os.path.join(args.save_dir, 'tensorboard')
+        writer = SummaryWriter(log_dir=tensorboard_dir)
+        logger.info(f"TensorBoard logging to: [cyan]{tensorboard_dir}[/cyan]", extra={"markup": True})
+
+        # Track best model
+        best_val_loss = float('inf')
 
         # Load checkpoint if provided
         if args.checkpoint_path is not None:
@@ -259,6 +296,10 @@ def train(in_model, train_dataset, val_dataset, args):
             final_loss = running_loss / (i + 1)
             logger.info(f"Epoch {epo} completed - Average Loss: [yellow]{final_loss:.4f}[/yellow]", extra={"markup": True})
 
+            # Log to tensorboard
+            writer.add_scalar('train/loss', final_loss, epo)
+            writer.add_scalar('train/learning_rate', args.learning_rate, epo)
+
         # Validation phase with lower learning rate
         logger.info(f"Switching to validation phase with learning rate: {args.learning_rate_val}")
         optimizer = optim.Adam(in_model.parameters(), lr=args.learning_rate_val)
@@ -315,11 +356,41 @@ def train(in_model, train_dataset, val_dataset, args):
             running_loss = running_loss / (i + 1)
             logger.info(f"Epoch {epo} completed - Average Loss: [yellow]{running_loss:.4f}[/yellow]", extra={"markup": True})
 
-            # Run validation
-            valid(in_model, val_dataset, args.batch_size, device, args.sample_rate)
+            # Log to tensorboard
+            writer.add_scalar('train/loss', running_loss, epo)
+            writer.add_scalar('train/learning_rate', args.learning_rate_val, epo)
 
-            # Save model checkpoint
+            # Run validation and get validation loss
+            val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
+                             save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
+
+            # Save latest checkpoint
             save_model(in_model, epo, args.save_dir, optimizer, running_loss)
+
+            # Save as latest.pt
+            latest_path = os.path.join(args.save_dir, 'latest.pt')
+            torch.save({
+                'model_state_dict': in_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': running_loss,
+                'epoch': epo
+            }, latest_path)
+
+            # Save best model based on validation loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_path = os.path.join(args.save_dir, 'best_model.pt')
+                torch.save({
+                    'model_state_dict': in_model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': val_loss,
+                    'epoch': epo
+                }, best_model_path)
+                logger.info(f"[green]✓[/green] New best model saved with validation loss: {best_val_loss:.4f}", extra={"markup": True})
+
+        # Close tensorboard writer
+        writer.close()
+        logger.info("TensorBoard writer closed")
 
         console.print(Panel.fit("[bold green]✓ Training Finished Successfully![/bold green]", border_style="green"))
         logger.info("[bold green]Training completed successfully[/bold green]", extra={"markup": True})
