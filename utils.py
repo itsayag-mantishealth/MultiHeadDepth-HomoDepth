@@ -443,6 +443,10 @@ class SceneFlowDataset(Dataset):
                                                           os.path.basename(image_path)[:-4] + '.pfm')
                             class_list.append((image_path, disparity_path))
 
+            # Shuffle with fixed seed before splitting for reproducibility
+            random.seed(42)
+            random.shuffle(class_list)
+
             split_index = int(len(class_list) * sp)
             if self.train:
                 image_list += class_list[:split_index]
