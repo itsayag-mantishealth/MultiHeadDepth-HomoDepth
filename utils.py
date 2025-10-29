@@ -279,9 +279,12 @@ def create_validation_debug_images(model, val_dataset, device, save_dir, epoch, 
                 if tensorboard_writer is not None:
                     # Convert figure to image array
                     fig.canvas.draw()
-                    img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-                    img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                    # Convert to CHW format for tensorboard
+                    # Use buffer_rgba() for matplotlib 3.8+ compatibility
+                    buf = fig.canvas.buffer_rgba()
+                    img_array = np.frombuffer(buf, dtype=np.uint8)
+                    img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+                    # Convert RGBA to RGB and then to CHW format for tensorboard
+                    img_array = img_array[:, :, :3]  # Drop alpha channel
                     img_array = np.transpose(img_array, (2, 0, 1))
                     tensorboard_writer.add_image(f'validation/sample_{idx:02d}', img_array, epoch)
 
