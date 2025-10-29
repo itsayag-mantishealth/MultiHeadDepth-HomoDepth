@@ -66,19 +66,16 @@ def valid(in_model, val_dataset, batch_size, device, samp_rate=None, save_dir=No
     # Create debug visualization images
     if save_dir is not None and epoch is not None:
         print('Creating validation debug images...')
-        try:
-            utils.create_validation_debug_images(
-                model=in_model,
-                val_dataset=val_dataset,
-                device=device,
-                save_dir=save_dir,
-                epoch=epoch,
-                num_samples=10,
-                stereo=True,
-                tensorboard_writer=tensorboard_writer
-            )
-        except Exception as e:
-            print(f'Warning: Failed to create debug images: {e}')
+        utils.create_validation_debug_images(
+            model=in_model,
+            val_dataset=val_dataset,
+            device=device,
+            save_dir=save_dir,
+            epoch=epoch,
+            num_samples=10,
+            stereo=True,
+            tensorboard_writer=tensorboard_writer
+        )
 
     # Return validation loss for best model tracking
     return loss1
@@ -168,17 +165,26 @@ def train(in_model, train_dataset, val_dataset, args):
         val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
                          save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
 
-        # Update best model if validation improved
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Save latest checkpoint after every epoch
+        latest_path = os.path.join(args.save_dir, 'latest.pt')
+        torch.save({
+            'model_state_dict': in_model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': avg_l1_loss,
+            'epoch': epo
+        }, latest_path)
+
+        # Update best model based on training loss
+        if avg_l1_loss < best_val_loss:
+            best_val_loss = avg_l1_loss
             best_model_path = os.path.join(args.save_dir, 'best_model.pt')
             torch.save({
                 'model_state_dict': in_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': val_loss,
+                'loss': avg_l1_loss,
                 'epoch': epo
             }, best_model_path)
-            print(f'New best model saved with validation loss: {best_val_loss:.4f}')
+            print(f'New best model saved with training loss: {best_val_loss:.4f}')
 
 
     optimizer = optim.Adam(in_model.parameters(), lr=args.learning_rate_val)
@@ -226,17 +232,17 @@ def train(in_model, train_dataset, val_dataset, args):
             'epoch': epo
         }, latest_path)
 
-        # Save best model based on validation loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Save best model based on training loss
+        if running_loss < best_val_loss:
+            best_val_loss = running_loss
             best_model_path = os.path.join(args.save_dir, 'best_model.pt')
             torch.save({
                 'model_state_dict': in_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': val_loss,
+                'loss': running_loss,
                 'epoch': epo
             }, best_model_path)
-            print(f'New best model saved with validation loss: {best_val_loss:.4f}')
+            print(f'New best model saved with training loss: {best_val_loss:.4f}')
 
     # Close tensorboard writer
     writer.close()
