@@ -300,6 +300,22 @@ def train(in_model, train_dataset, val_dataset, args):
             writer.add_scalar('train/loss', final_loss, epo)
             writer.add_scalar('train/learning_rate', args.learning_rate, epo)
 
+            # Run validation at the end of each training epoch
+            val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
+                             save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
+
+            # Update best model if validation improved
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_path = os.path.join(args.save_dir, 'best_model.pt')
+                torch.save({
+                    'model_state_dict': in_model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': val_loss,
+                    'epoch': epo
+                }, best_model_path)
+                logger.info(f"[green]✓[/green] New best model saved with validation loss: {best_val_loss:.4f}", extra={"markup": True})
+
         # Validation phase with lower learning rate
         logger.info(f"Switching to validation phase with learning rate: {args.learning_rate_val}")
         optimizer = optim.Adam(in_model.parameters(), lr=args.learning_rate_val)
