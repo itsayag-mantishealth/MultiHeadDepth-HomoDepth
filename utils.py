@@ -152,6 +152,148 @@ def RMSE(pred_depth, gt_depth):
     return torch.sqrt(mse)
 
 
+def create_validation_debug_images(model, val_dataset, device, save_dir, epoch, num_samples=10, stereo=True, tensorboard_writer=None):
+    """
+    Create debug visualization images for validation.
+
+    Args:
+        model: The trained model to evaluate
+        val_dataset: Validation dataset
+        device: Device to run inference on
+        save_dir: Directory to save debug images (will create validation_debug subdirectory)
+        epoch: Current epoch number (for filename)
+        num_samples: Number of random samples to visualize (default: 10)
+        stereo: Whether the dataset contains stereo images (default: True)
+        tensorboard_writer: Optional tensorboard SummaryWriter for logging
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+
+    # Create debug directory
+    debug_dir = os.path.join(save_dir, 'validation_debug')
+    os.makedirs(debug_dir, exist_ok=True)
+
+    # Select random samples
+    total_samples = len(val_dataset)
+    if num_samples > total_samples:
+        num_samples = total_samples
+    random_indices = random.sample(range(total_samples), num_samples)
+
+    model.eval()
+    with torch.no_grad():
+        for idx, sample_idx in enumerate(random_indices):
+            try:
+                # Get sample from dataset
+                data = val_dataset[sample_idx]
+
+                # Handle different dataset formats
+                if len(data) == 2:
+                    images, gt_disp = data
+                elif len(data) == 3:
+                    images, _, gt_disp = data
+                else:
+                    logger.warning(f"Unexpected data format with {len(data)} elements")
+                    continue
+
+                # Move to device and add batch dimension
+                images_batch = images.unsqueeze(0).to(device)
+                gt_disp_batch = gt_disp.to(device)
+
+                # Get model prediction
+                output = model(images_batch)
+
+                # Handle different model output formats
+                if isinstance(output, tuple):
+                    # HomoDepth model returns (homo_norm, homo, disp)
+                    pred_disp = output[2].squeeze(0)
+                else:
+                    # Stereo_MulH model returns disp directly
+                    pred_disp = output.squeeze(0)
+
+                # Move to CPU and convert to numpy
+                if stereo and images.shape[0] == 6:
+                    # Split stereo images
+                    left_img = images[:3].cpu().permute(1, 2, 0).numpy()
+                    right_img = images[3:6].cpu().permute(1, 2, 0).numpy()
+                else:
+                    # Single image or mono case
+                    left_img = images[:3].cpu().permute(1, 2, 0).numpy()
+                    right_img = None
+
+                gt_disp_np = gt_disp_batch.squeeze().cpu().numpy()
+                pred_disp_np = pred_disp.squeeze().cpu().numpy()
+
+                # Compute error
+                # Create mask for valid pixels
+                valid_mask = (gt_disp_np > 0) & (~np.isinf(gt_disp_np)) & (~np.isnan(gt_disp_np))
+                error = np.abs(gt_disp_np - pred_disp_np)
+                error[~valid_mask] = 0  # Mask out invalid pixels
+
+                # Create visualization
+                if right_img is not None:
+                    fig, axes = plt.subplots(1, 5, figsize=(25, 5))
+                else:
+                    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+
+                # Left image
+                axes[0].imshow(np.clip(left_img, 0, 1))
+                axes[0].set_title('Left Image')
+                axes[0].axis('off')
+
+                # Right image (if available)
+                if right_img is not None:
+                    axes[1].imshow(np.clip(right_img, 0, 1))
+                    axes[1].set_title('Right Image')
+                    axes[1].axis('off')
+                    offset = 1
+                else:
+                    offset = 0
+
+                # Ground truth disparity
+                im_gt = axes[1 + offset].imshow(gt_disp_np, cmap='jet')
+                axes[1 + offset].set_title('Ground Truth Disparity')
+                axes[1 + offset].axis('off')
+                plt.colorbar(im_gt, ax=axes[1 + offset], fraction=0.046, pad=0.04)
+
+                # Predicted disparity
+                im_pred = axes[2 + offset].imshow(pred_disp_np, cmap='jet',
+                                                  vmin=gt_disp_np.min(), vmax=gt_disp_np.max())
+                axes[2 + offset].set_title('Predicted Disparity')
+                axes[2 + offset].axis('off')
+                plt.colorbar(im_pred, ax=axes[2 + offset], fraction=0.046, pad=0.04)
+
+                # Error map
+                im_error = axes[3 + offset].imshow(error, cmap='hot')
+                axes[3 + offset].set_title('Absolute Error')
+                axes[3 + offset].axis('off')
+                plt.colorbar(im_error, ax=axes[3 + offset], fraction=0.046, pad=0.04)
+
+                plt.tight_layout()
+
+                # Save figure to file
+                save_path = os.path.join(debug_dir, f'epoch_{epoch:04d}_sample_{idx:02d}.png')
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+                # Log to tensorboard if writer is provided
+                if tensorboard_writer is not None:
+                    # Convert figure to image array
+                    fig.canvas.draw()
+                    img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+                    img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                    # Convert to CHW format for tensorboard
+                    img_array = np.transpose(img_array, (2, 0, 1))
+                    tensorboard_writer.add_image(f'validation/sample_{idx:02d}', img_array, epoch)
+
+                plt.close(fig)
+
+            except Exception as e:
+                logger.error(f"Failed to create debug image for sample {sample_idx}: {e}")
+                continue
+
+    logger.info(f"Saved {num_samples} debug visualization images to {debug_dir}")
+
+
 class WMSELoss(torch.nn.Module):
     def __init__(self, wight, device):
         super().__init__()
