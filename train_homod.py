@@ -24,14 +24,22 @@ def save_model(in_model, epoch, out_dir, optimizer, loss):
     }, out_path)
 
 
-def valid(in_model, val_dataset, batch_size, device, samp_rate=None, save_dir=None, epoch=None, tensorboard_writer=None):
-    if samp_rate is None:
+def valid(in_model, val_dataset, batch_size, device, samp_rate=None, data_percentage=None, save_dir=None, epoch=None, tensorboard_writer=None):
+    if samp_rate is None and data_percentage is None:
         test_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    else:
+        print(f"Using full validation dataset: {len(val_dataset)} samples")
+    elif samp_rate is not None:
         subset_size = len(val_dataset) // samp_rate
         subset_sampler = SubsetRandomSampler(range(subset_size))
         test_loader = DataLoader(val_dataset, batch_size=batch_size,
                                  shuffle=False, sampler=subset_sampler)
+        print(f"Using sampled validation dataset: {subset_size} samples (rate: 1/{samp_rate})")
+    else:  # data_percentage is not None
+        subset_size = int(len(val_dataset) * data_percentage)
+        subset_sampler = SubsetRandomSampler(range(subset_size))
+        test_loader = DataLoader(val_dataset, batch_size=batch_size,
+                                 shuffle=False, sampler=subset_sampler)
+        print(f"Using {data_percentage*100:.1f}% of validation data: {subset_size}/{len(val_dataset)} samples")
 
     in_model.to(device)
     in_model.eval()
@@ -85,13 +93,19 @@ def train(in_model, train_dataset, val_dataset, args):
     min_mat = [0.55, -0.2, -96, -0.35, 0.85, -56, 0.9]
     max_mat = [1.05, 0.4, -15, 0.25, 1.2, 128, 1]
 
-    if args.sample_rate is None:
+    if args.sample_rate is None and args.data_percentage is None:
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    else:
+        print(f"Using full training dataset: {len(train_dataset)} samples")
+    elif args.sample_rate is not None:
         subset_size = len(train_dataset) // args.sample_rate
         subset_sampler = SubsetRandomSampler(range(subset_size))
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=subset_sampler)
-        print('Sample rate: %d' % args.sample_rate)
+        print(f"Sample rate: {args.sample_rate}, using {subset_size} samples")
+    else:  # args.data_percentage is not None
+        subset_size = int(len(train_dataset) * args.data_percentage)
+        subset_sampler = SubsetRandomSampler(range(subset_size))
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=subset_sampler)
+        print(f"Using {args.data_percentage*100:.1f}% of training data: {subset_size}/{len(train_dataset)} samples")
 
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     device = torch.device(args.device)
@@ -162,7 +176,7 @@ def train(in_model, train_dataset, val_dataset, args):
         writer.add_scalar('train/learning_rate', args.learning_rate, epo)
 
         # Run validation at the end of each training epoch
-        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
+        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate, args.data_percentage,
                          save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
 
         # Save latest checkpoint after every epoch
@@ -217,7 +231,7 @@ def train(in_model, train_dataset, val_dataset, args):
         writer.add_scalar('train/learning_rate', args.learning_rate_val, epo)
 
         # Run validation and get validation loss
-        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
+        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate, args.data_percentage,
                          save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
 
         # Save epoch checkpoint
@@ -267,6 +281,8 @@ if __name__ == "__main__":
     parser.add_argument('--val_epochs', '-v', type=int, default=20)
     parser.add_argument('--sample_rate', '-sr', type=int, default=None,
                         help='Sample rate of the dataset. The length of the dataset is divided by it.')
+    parser.add_argument('--data_percentage', type=float, default=None,
+                        help='Percentage of data to use for training (0.0-1.0). Example: 0.1 for 10%%, 0.5 for 50%%.')
     parser.add_argument('--learning_rate', '-lr', type=float, default=4e-4,
                         help='Learning rate of the model in training phase.')
     parser.add_argument('--learning_rate_val', '-lrv', type=float, default=4e-4,
@@ -283,6 +299,16 @@ if __name__ == "__main__":
 
     if arguments.total_epochs < arguments.val_epochs:
         print('Total number of epochs should greater than the number of validation epochs. Exit')
+        exit()
+
+    # Validate that sample_rate and data_percentage are not both specified
+    if arguments.sample_rate is not None and arguments.data_percentage is not None:
+        print('Error: Cannot specify both --sample_rate and --data_percentage. Please use only one.')
+        exit()
+
+    # Validate data_percentage range
+    if arguments.data_percentage is not None and (arguments.data_percentage <= 0.0 or arguments.data_percentage > 1.0):
+        print('Error: --data_percentage must be between 0.0 and 1.0 (exclusive of 0.0, inclusive of 1.0)')
         exit()
 
 

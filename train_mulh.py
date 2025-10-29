@@ -52,19 +52,25 @@ def save_model(in_model, epoch, out_dir, optimizer, loss):
     logger.info(f"[green]✓[/green] Checkpoint saved successfully: {out_path} ({file_size:.2f} MB)", extra={"markup": True})
 
 
-def valid(in_model, val_dataset, batch_size, device, samp_rate=None, save_dir=None, epoch=None, tensorboard_writer=None):
+def valid(in_model, val_dataset, batch_size, device, samp_rate=None, data_percentage=None, save_dir=None, epoch=None, tensorboard_writer=None):
     """Validate model with rich progress tracking."""
     logger.info("[bold blue]Starting validation phase...[/bold blue]", extra={"markup": True})
 
-    if samp_rate is None:
+    if samp_rate is None and data_percentage is None:
         test_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
         logger.info(f"Using full validation dataset: {len(val_dataset)} samples")
-    else:
+    elif samp_rate is not None:
         subset_size = len(val_dataset) // samp_rate
         subset_sampler = SubsetRandomSampler(range(subset_size))
         test_loader = DataLoader(val_dataset, batch_size=batch_size,
                                  shuffle=False, sampler=subset_sampler)
         logger.info(f"Using sampled validation dataset: {subset_size} samples (rate: 1/{samp_rate})")
+    else:  # data_percentage is not None
+        subset_size = int(len(val_dataset) * data_percentage)
+        subset_sampler = SubsetRandomSampler(range(subset_size))
+        test_loader = DataLoader(val_dataset, batch_size=batch_size,
+                                 shuffle=False, sampler=subset_sampler)
+        logger.info(f"Using {data_percentage*100:.1f}% of validation data: {subset_size}/{len(val_dataset)} samples")
 
     in_model.to(device)
     in_model.eval()
@@ -138,14 +144,19 @@ def train(in_model, train_dataset, val_dataset, args):
     console.print(Panel.fit("[bold green]Starting Training Process[/bold green]", border_style="green"))
 
     # Setup data loader
-    if args.sample_rate is None:
+    if args.sample_rate is None and args.data_percentage is None:
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         logger.info(f"Using full training dataset: {len(train_dataset)} samples")
-    else:
+    elif args.sample_rate is not None:
         subset_size = len(train_dataset) // args.sample_rate
         subset_sampler = SubsetRandomSampler(range(subset_size))
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=subset_sampler)
         logger.info(f"Sample rate: {args.sample_rate}, using {subset_size} samples")
+    else:  # args.data_percentage is not None
+        subset_size = int(len(train_dataset) * args.data_percentage)
+        subset_sampler = SubsetRandomSampler(range(subset_size))
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=subset_sampler)
+        logger.info(f"Using {args.data_percentage*100:.1f}% of training data: {subset_size}/{len(train_dataset)} samples")
 
     batch_num = len(train_dataset) // args.batch_size
     logger.info(f"Total batches per epoch: {batch_num}")
@@ -248,7 +259,7 @@ def train(in_model, train_dataset, val_dataset, args):
         writer.add_scalar('train/learning_rate', args.learning_rate, epo)
 
         # Run validation at the end of each training epoch
-        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
+        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate, args.data_percentage,
                          save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
 
         # Save latest checkpoint after every epoch
@@ -320,7 +331,7 @@ def train(in_model, train_dataset, val_dataset, args):
         writer.add_scalar('train/learning_rate', args.learning_rate_val, epo)
 
         # Run validation and get validation loss
-        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate,
+        val_loss = valid(in_model, val_dataset, args.batch_size, device, args.sample_rate, args.data_percentage,
                          save_dir=args.save_dir, epoch=epo, tensorboard_writer=writer)
 
         # Save latest checkpoint
@@ -379,6 +390,8 @@ if __name__ == "__main__":
     parser.add_argument('--val_epochs', '-v', type=int, default=20)
     parser.add_argument('--sample_rate', type=int, default=None,
                         help='Sample rate of the dataset. The length of the dataset is divided by it.')
+    parser.add_argument('--data_percentage', type=float, default=None,
+                        help='Percentage of data to use for training (0.0-1.0). Example: 0.1 for 10%%, 0.5 for 50%%.')
     parser.add_argument('--learning_rate', '-lr', type=float, default=4e-4,
                         help='Learning rate of the model in training phase.')
     parser.add_argument('--learning_rate_val', '-lrv', type=float, default=4e-4,
@@ -399,6 +412,7 @@ if __name__ == "__main__":
     config_table.add_row("Total Epochs", str(arguments.total_epochs))
     config_table.add_row("Validation Epochs", str(arguments.val_epochs))
     config_table.add_row("Sample Rate", str(arguments.sample_rate) if arguments.sample_rate else "Full dataset")
+    config_table.add_row("Data Percentage", f"{arguments.data_percentage*100:.1f}%" if arguments.data_percentage else "Full dataset")
     config_table.add_row("Training LR", str(arguments.learning_rate))
     config_table.add_row("Validation LR", str(arguments.learning_rate_val))
     config_table.add_row("Checkpoint Path", arguments.checkpoint_path if arguments.checkpoint_path else "None")
@@ -406,7 +420,15 @@ if __name__ == "__main__":
     console.print(config_table)
     console.print("\n")
 
-        # Validate arguments
+    # Validate arguments
+    if arguments.sample_rate is not None and arguments.data_percentage is not None:
+        logger.error("[red]Cannot use both --sample_rate and --data_percentage. Choose one.[/red]", extra={"markup": True})
+        exit(1)
+
+    if arguments.data_percentage is not None and (arguments.data_percentage <= 0.0 or arguments.data_percentage > 1.0):
+        logger.error("[red]--data_percentage must be between 0.0 and 1.0[/red]", extra={"markup": True})
+        exit(1)
+
     if arguments.total_epochs < arguments.val_epochs:
         logger.error("[red]Total number of epochs should be greater than the number of validation epochs[/red]", extra={"markup": True})
         exit(1)
