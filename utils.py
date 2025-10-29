@@ -251,13 +251,13 @@ def create_validation_debug_images(model, val_dataset, device, save_dir, epoch, 
                     offset = 0
 
                 # Ground truth disparity
-                im_gt = axes[1 + offset].imshow(gt_disp_np, cmap='jet')
+                im_gt = axes[1 + offset].imshow(gt_disp_np, cmap='gray')
                 axes[1 + offset].set_title('Ground Truth Disparity')
                 axes[1 + offset].axis('off')
                 plt.colorbar(im_gt, ax=axes[1 + offset], fraction=0.046, pad=0.04)
 
                 # Predicted disparity
-                im_pred = axes[2 + offset].imshow(pred_disp_np, cmap='jet',
+                im_pred = axes[2 + offset].imshow(pred_disp_np, cmap='gray',
                                                   vmin=gt_disp_np.min(), vmax=gt_disp_np.max())
                 axes[2 + offset].set_title('Predicted Disparity')
                 axes[2 + offset].axis('off')
