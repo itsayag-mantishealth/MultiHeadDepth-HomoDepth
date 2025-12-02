@@ -434,8 +434,8 @@ def train(
     # PHASE 1: MAIN TRAINING
     # ========================================================================
 
-    train_epochs = args.total_epochs - args.val_epochs
-    logger.info(f"Training: {train_epochs} epochs, Fine-tuning: {args.val_epochs} epochs")
+    train_epochs = args.total_epochs - args.finetune_epochs
+    logger.info(f"Training: {train_epochs} epochs, Fine-tuning: {args.finetune_epochs} epochs")
 
     console.print(Panel(
         f"[bold cyan]Phase 1: Training ({train_epochs} epochs)[/bold cyan]\n"
@@ -480,7 +480,7 @@ def train(
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate_val)
 
     console.print(Panel(
-        f"[bold magenta]Phase 2: Fine-tuning ({args.val_epochs} epochs)[/bold magenta]\n"
+        f"[bold magenta]Phase 2: Fine-tuning ({args.finetune_epochs} epochs)[/bold magenta]\n"
         f"Learning Rate: {args.learning_rate_val}",
         border_style="magenta"
     ))
@@ -553,6 +553,10 @@ def parse_arguments() -> argparse.Namespace:
         help='Path to dataset directory'
     )
     parser.add_argument(
+        '--use_segmentation_mask', action='store_true',
+        help='Apply segmentation masks to input images. Expects {index}_mask.png files alongside {index}.png'
+    )
+    parser.add_argument(
         '--sample_rate', type=int, default=None,
         help='Use 1/sample_rate of data (mutually exclusive with --data_percentage)'
     )
@@ -577,7 +581,7 @@ def parse_arguments() -> argparse.Namespace:
         help='Total number of training epochs'
     )
     parser.add_argument(
-        '--val_epochs', '-v', type=int, default=20,
+        '--finetune_epochs', '-v', type=int, default=20,
         help='Number of fine-tuning epochs (with lower learning rate)'
     )
     parser.add_argument(
@@ -616,8 +620,8 @@ def validate_arguments(args: argparse.Namespace) -> None:
             errors.append("--data_percentage must be in range (0.0, 1.0]")
 
     # Validate epoch configuration
-    if args.total_epochs < args.val_epochs:
-        errors.append("--total_epochs must be >= --val_epochs")
+    if args.total_epochs < args.finetune_epochs:
+        errors.append("--total_epochs must be >= --finetune_epochs")
 
     # Validate data path
     if not os.path.exists(args.data_path):
@@ -643,11 +647,12 @@ def display_configuration(args: argparse.Namespace) -> None:
     # Add configuration rows
     config_table.add_row("Dataset", args.dataset)
     config_table.add_row("Data Path", args.data_path)
+    config_table.add_row("Segmentation Mask", "Enabled" if args.use_segmentation_mask else "Disabled")
     config_table.add_row("Device", args.device)
     config_table.add_row("Save Directory", args.save_dir)
     config_table.add_row("Batch Size", str(args.batch_size))
     config_table.add_row("Total Epochs", str(args.total_epochs))
-    config_table.add_row("Fine-tuning Epochs", str(args.val_epochs))
+    config_table.add_row("Fine-tuning Epochs", str(args.finetune_epochs))
 
     # Data sampling configuration
     if args.sample_rate:
@@ -671,15 +676,26 @@ def load_datasets(args: argparse.Namespace) -> Tuple[torch.utils.data.Dataset, t
 
     # Load appropriate dataset
     if args.dataset == 'sceneflow':
-        train_ds = utils.SceneFlowDataset(args.data_path, train=True, stereo=True)
-        val_ds = utils.SceneFlowDataset(args.data_path, train=False, stereo=True)
+        if args.use_segmentation_mask:
+            logger.info("[cyan]Using segmentation masks[/cyan]", extra={"markup": True})
+            train_ds = utils.MaskedSceneFlowDataset(args.data_path, train=True, stereo=True, use_mask=True)
+            val_ds = utils.MaskedSceneFlowDataset(args.data_path, train=False, stereo=True, use_mask=True)
+        else:
+            train_ds = utils.SceneFlowDataset(args.data_path, train=True, stereo=True)
+            val_ds = utils.SceneFlowDataset(args.data_path, train=False, stereo=True)
     elif args.dataset == 'ADT':
+        if args.use_segmentation_mask:
+            logger.warning("[yellow]Segmentation mask not supported for ADT dataset, ignoring flag[/yellow]", extra={"markup": True})
         train_ds = utils.ADT(args.data_path, train=True)
         val_ds = utils.ADT(args.data_path, train=False)
     elif args.dataset == 'DTU':
+        if args.use_segmentation_mask:
+            logger.warning("[yellow]Segmentation mask not supported for DTU dataset, ignoring flag[/yellow]", extra={"markup": True})
         train_ds = utils.DTU(args.data_path, train='train', output_homo=False)
         val_ds = utils.DTU(args.data_path, train='test', output_homo=False)
     elif args.dataset == 'Middlebury':
+        if args.use_segmentation_mask:
+            logger.warning("[yellow]Segmentation mask not supported for Middlebury dataset, ignoring flag[/yellow]", extra={"markup": True})
         train_ds = utils.Middlebury(args.data_path)
         val_ds = utils.Middlebury(args.data_path)
     else:
