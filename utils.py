@@ -456,6 +456,165 @@ class Middlebury(Dataset):
             raise
 
 
+class MaskedSceneFlowDataset(Dataset):
+    """
+    SceneFlow dataset with segmentation mask support.
+
+    Expected directory structure:
+        root_dir/
+            {class_name}/
+                frames_cleanpass/
+                    left/
+                        {index}.png
+                        {index}_mask.png
+                    right/
+                        {index}.png
+                        {index}_mask.png
+                disparity/
+                    left/
+                        {index}.pfm
+
+    When use_mask=True, the mask is applied to the images (pixels outside mask become 0).
+    """
+    def __init__(self, root_dir, train=True, stereo=True, use_mask=True):
+        self.root_dir = root_dir
+        self.classes = os.listdir(self.root_dir)
+        self.train = train
+        self.stereo = stereo
+        self.use_mask = use_mask
+        self.image_list = self.get_file_list(0.7)
+
+    def get_file_list(self, sp):
+        image_list = []
+        for class_name in self.classes:
+            class_list = []
+            left_dir = os.path.join(self.root_dir, class_name, 'frames_cleanpass', 'left')
+
+            if not os.path.exists(left_dir):
+                continue
+
+            for filename in os.listdir(left_dir):
+                # Only process image files, not mask files
+                if filename.endswith('.png') and not filename.endswith('_mask.png'):
+                    index = filename[:-4]  # Remove .png extension
+
+                    image_path = os.path.join(left_dir, filename)
+                    mask_path = os.path.join(left_dir, f'{index}_mask.png')
+                    disparity_path = os.path.join(self.root_dir, class_name, 'disparity', 'left', f'{index}.pfm')
+
+                    # Verify all required files exist
+                    if os.path.exists(disparity_path):
+                        if self.use_mask and not os.path.exists(mask_path):
+                            logger.warning(f"Mask not found for {image_path}, skipping")
+                            continue
+                        class_list.append((image_path, mask_path, disparity_path, class_name, index))
+
+            # Shuffle with fixed seed before splitting for reproducibility
+            random.seed(42)
+            random.shuffle(class_list)
+
+            split_index = int(len(class_list) * sp)
+            if self.train:
+                image_list += class_list[:split_index]
+            else:
+                image_list += class_list[split_index:]
+
+        print(f"{len(image_list)} data collected (masked={self.use_mask})")
+        return image_list
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def _apply_mask(self, image_tensor, mask_path):
+        """Apply binary mask to image tensor. Pixels outside mask become 0."""
+        mask = iio.imread(mask_path)
+        mask = resize(mask, (288, 384), anti_aliasing=False, order=0)
+
+        # Convert mask to binary (0 or 1)
+        if len(mask.shape) == 3:
+            mask = mask[:, :, 0]  # Take first channel if RGB
+        mask = (mask > 0.5).astype(np.float32)
+
+        # Apply mask to each channel
+        mask_tensor = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
+        return image_tensor * mask_tensor
+
+    def __getitem__(self, idx):
+        try:
+            image_path, mask_path, disparity_path, class_name, index = self.image_list[idx]
+            logger.debug(f"Loading masked sample {idx}: [cyan]{class_name}/{index}[/cyan]", extra={"markup": True})
+
+            # Load left image
+            try:
+                logger.debug(f"Loading left image from: {image_path}")
+                left_image = img2tensor(image_path)
+
+                if self.use_mask:
+                    left_image = self._apply_mask(left_image, mask_path)
+            except FileNotFoundError as e:
+                logger.error(f"[red]✗ Left image not found:[/red] {image_path}", extra={"markup": True})
+                raise FileNotFoundError(f"Left image file not found: {image_path}") from e
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load left image:[/red] {image_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load left image (path: {image_path}): {e}") from e
+
+            # Load disparity
+            try:
+                logger.debug(f"Loading disparity from: {disparity_path}")
+                disparity = readPFM(disparity_path)
+                disparity = resize(disparity, (288, 384), anti_aliasing=False, order=0)
+                disparity = torch.tensor(disparity, dtype=torch.float32).unsqueeze(0).float()
+            except FileNotFoundError as e:
+                logger.error(f"[red]✗ Disparity file not found:[/red] {disparity_path}", extra={"markup": True})
+                raise FileNotFoundError(f"Disparity file not found: {disparity_path}") from e
+            except Exception as e:
+                logger.error(f"[red]✗ Failed to load disparity:[/red] {disparity_path}\n[red]Error:[/red] {e}", extra={"markup": True})
+                raise RuntimeError(f"Failed to load disparity (path: {disparity_path}): {e}") from e
+
+            # Load right image if stereo mode
+            if self.stereo:
+                try:
+                    right_dir = os.path.join(self.root_dir, class_name, 'frames_cleanpass', 'right')
+                    right_image_path = os.path.join(right_dir, f'{index}.png')
+                    right_mask_path = os.path.join(right_dir, f'{index}_mask.png')
+
+                    logger.debug(f"Loading right image from: {right_image_path}")
+
+                    if not os.path.exists(right_image_path):
+                        logger.error(f"[red]✗ Right image file does not exist:[/red]", extra={"markup": True})
+                        logger.error(f"  Expected path: [yellow]{right_image_path}[/yellow]", extra={"markup": True})
+                        raise FileNotFoundError(f"Right image file not found: {right_image_path}")
+
+                    right_image = img2tensor(right_image_path)
+
+                    if self.use_mask:
+                        if not os.path.exists(right_mask_path):
+                            logger.error(f"[red]✗ Right mask file does not exist:[/red] {right_mask_path}", extra={"markup": True})
+                            raise FileNotFoundError(f"Right mask file not found: {right_mask_path}")
+                        right_image = self._apply_mask(right_image, right_mask_path)
+
+                    left_image = torch.cat((left_image, right_image), dim=0)
+
+                except FileNotFoundError as e:
+                    logger.error(f"[red]✗ FAILED - Right image not found for sample {idx}:[/red]", extra={"markup": True})
+                    logger.error(f"  Left image: [cyan]{image_path}[/cyan]", extra={"markup": True})
+                    raise
+                except Exception as e:
+                    logger.error(f"[red]✗ FAILED - Error loading right image for sample {idx}:[/red]", extra={"markup": True})
+                    logger.error(f"  Error: [red]{type(e).__name__}: {e}[/red]", extra={"markup": True})
+                    raise RuntimeError(f"Failed to load right image for sample {idx}: {e}") from e
+
+            return left_image, disparity
+
+        except Exception as e:
+            logger.error(f"[red bold]✗ FAILED to load masked sample {idx}[/red bold]", extra={"markup": True})
+            logger.error(f"  Dataset: MaskedSceneFlowDataset")
+            logger.error(f"  Index: {idx}")
+            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"  Error message: {str(e)}")
+            raise
+
+
 class SceneFlowDataset(Dataset):
     def __init__(self, root_dir, train=True, stereo=True):
         self.root_dir = root_dir
